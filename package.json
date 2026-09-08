@@ -1,0 +1,218 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "author": "johan_yang",
+  "categories": [
+    "Productivity"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@raycast/api": "^1.104.20",
+    "@raycast/utils": "^2.2.7"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^2.2.0",
+    "@types/node": "22.19.17",
+    "@types/react": "19.0.10",
+    "eslint": "^10.5.0",
+    "graphql": "^17.0.2",
+    "prettier": "^3.8.5",
+    "typescript": "^6.0.3"
+  },
+  "name": "linear-views",
+  "title": "Linear Views",
+  "description": "Browse saved Linear views and issue details in Raycast.",
+  "icon": "extension-icon.png",
+  "platforms": [
+    "macOS"
+  ],
+  "commands": [
+    {
+      "name": "linear-views",
+      "title": "Linear Views Menu Bar",
+      "description": "Switch and open saved Linear views",
+      "mode": "menu-bar"
+    },
+    {
+      "name": "show-view",
+      "title": "Show Linear View",
+      "description": "Browse and search the issues in your saved Linear views",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "apiKey",
+      "title": "Linear API Key",
+      "description": "Personal Linear API key with read access to your views. Used only with api.linear.app.",
+      "type": "password",
+      "required": false
+    },
+    {
+      "name": "view1Name",
+      "title": "View 1 Name",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false,
+      "default": "Due Tomorrow"
+    },
+    {
+      "name": "view1Url",
+      "title": "View 1 URL",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false,
+      "default": "https://linear.app/yongkang/view/due-tomorrow-6b38b9fce66a"
+    },
+    {
+      "name": "view2Name",
+      "title": "View 2 Name",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false,
+      "default": "OverDue issues"
+    },
+    {
+      "name": "view2Url",
+      "title": "View 2 URL",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false,
+      "default": "https://linear.app/yongkang/view/overdue-issues-be1ac40d9b1f"
+    },
+    {
+      "name": "view3Name",
+      "title": "View 3 Name",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false,
+      "default": "ToDo"
+    },
+    {
+      "name": "view3Url",
+      "title": "View 3 URL",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false,
+      "default": "https://linear.app/yongkang/view/todo-41428a79d10e"
+    },
+    {
+      "name": "view4Name",
+      "title": "View 4 Name",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "view4Url",
+      "title": "View 4 URL",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "view5Name",
+      "title": "View 5 Name",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "view5Url",
+      "title": "View 5 URL",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "view6Name",
+      "title": "View 6 Name",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "view6Url",
+      "title": "View 6 URL",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "view7Name",
+      "title": "View 7 Name",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "view7Url",
+      "title": "View 7 URL",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "view8Name",
+      "title": "View 8 Name",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "view8Url",
+      "title": "View 8 URL",
+      "description": "Leave both fields empty to hide this slot.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "defaultView",
+      "title": "Default View",
+      "description": "Used before selecting a view or if the selected view is removed.",
+      "type": "dropdown",
+      "required": true,
+      "default": "3",
+      "data": [
+        {
+          "title": "View 1",
+          "value": "1"
+        },
+        {
+          "title": "View 2",
+          "value": "2"
+        },
+        {
+          "title": "View 3",
+          "value": "3"
+        },
+        {
+          "title": "View 4",
+          "value": "4"
+        },
+        {
+          "title": "View 5",
+          "value": "5"
+        },
+        {
+          "title": "View 6",
+          "value": "6"
+        },
+        {
+          "title": "View 7",
+          "value": "7"
+        },
+        {
+          "title": "View 8",
+          "value": "8"
+        }
+      ]
+    }
+  ],
+  "scripts": {
+    "build": "ray build",
+    "dev": "ray develop",
+    "lint": "ray lint",
+    "fix-lint": "ray lint --fix",
+    "test": "node --test tests/client.test.cjs"
+  }
+}
