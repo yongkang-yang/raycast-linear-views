@@ -37,8 +37,7 @@ export default function Command() {
   return (
     <MenuBarExtra
       icon={{ source: { light: "linear-icon-dark.png", dark: "linear-icon-light.png" } }}
-      title={current ? current.name : "Linear Views"}
-      tooltip="View your Linear tasks in Raycast"
+      tooltip={current ? current.name : "Linear Views"}
       isLoading={loading}
     >
       <MenuBarExtra.Section title="Views">

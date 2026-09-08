@@ -248,7 +248,12 @@ export default function Command({ launchContext }: LaunchProps<{ launchContext: 
         shortcut={Keyboard.Shortcut.Common.Refresh}
         onAction={() => setRefresh((value) => value + 1)}
       />
-      <SortAndFilterActions sortKey={sortKey} setSortKey={changeSortKey} hideDone={hideDone} setHideDone={changeHideDone} />
+      <SortAndFilterActions
+        sortKey={sortKey}
+        setSortKey={changeSortKey}
+        hideDone={hideDone}
+        setHideDone={changeHideDone}
+      />
       <SettingsAction />
     </ActionPanel>
   );
