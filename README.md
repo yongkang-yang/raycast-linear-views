@@ -2,6 +2,11 @@
 
 Browse the tasks in your saved Linear custom views inside Raycast.
 
+> **Not published to the Raycast Store yet.** Install it locally — see
+> [Development](#development) below (`npm install && npm run dev`). That
+> command builds the extension and registers it in your local Raycast in
+> dev mode; it shows up immediately and hot-reloads on further changes.
+
 ## Setup
 
 1. In Raycast, run **Show Linear View** and select **Configure Linear Views**.
