@@ -16,8 +16,19 @@ import {
   Keyboard,
 } from "@raycast/api";
 import { useEffect, useRef, useState } from "react";
-import { fetchView, Issue, ViewResult } from "./linear-client";
+import {
+  fetchTeamStates,
+  fetchView,
+  Issue,
+  updateIssueDueDate,
+  updateIssueState,
+  ViewResult,
+  WorkflowState,
+} from "./linear-client";
 import { configuredViews, currentView, hideDoneStorageKey, sortKeyStorageKey, storageKey } from "./views";
+function toTimelessDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
 function SettingsAction() {
   return <Action title="Configure Linear Views" icon={Icon.Gear} onAction={openExtensionPreferences} />;
 }
@@ -90,28 +101,111 @@ function SortAndFilterActions({
     </ActionPanel.Section>
   );
 }
-function IssueDetails({ issue }: { issue: Issue }) {
+function IssueDetails({
+  issue,
+  apiKey,
+  onUpdate,
+}: {
+  issue: Issue;
+  apiKey: string;
+  onUpdate: (updated: Pick<Issue, "id" | "state" | "dueDate">) => void;
+}) {
+  const [current, setCurrent] = useState(issue);
+  const [states, setStates] = useState<WorkflowState[]>();
+  const [statesError, setStatesError] = useState<string>();
+  const [updating, setUpdating] = useState(false);
+  async function loadStates() {
+    if (states || statesError) return; // Fetched once per detail view; the list opens a fresh one anyway.
+    try {
+      setStates(await fetchTeamStates(current.team.id, apiKey, new AbortController().signal));
+    } catch (error) {
+      setStatesError(error instanceof Error ? error.message : "Could not load statuses.");
+    }
+  }
+  async function changeState(state: WorkflowState) {
+    if (state.id === current.state.id) return;
+    setUpdating(true);
+    try {
+      const updatedState = await updateIssueState(current.id, state.id, apiKey, new AbortController().signal);
+      const updated = { ...current, state: updatedState };
+      setCurrent(updated);
+      onUpdate(updated);
+      await showToast({ style: Toast.Style.Success, title: `Status Set to ${updatedState.name}` });
+    } catch (error) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Could Not Update Status",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setUpdating(false);
+    }
+  }
+  async function changeDueDate(date: Date | null) {
+    setUpdating(true);
+    try {
+      const dueDate = date ? toTimelessDate(date) : null;
+      const updatedDueDate = await updateIssueDueDate(current.id, dueDate, apiKey, new AbortController().signal);
+      const updated = { ...current, dueDate: updatedDueDate };
+      setCurrent(updated);
+      onUpdate(updated);
+      await showToast({
+        style: Toast.Style.Success,
+        title: updatedDueDate ? `Due Date Set to ${updatedDueDate}` : "Due Date Cleared",
+      });
+    } catch (error) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Could Not Update Due Date",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setUpdating(false);
+    }
+  }
   return (
     <Detail
-      navigationTitle={issue.identifier}
-      markdown={`# ${issue.identifier}: ${issue.title}\n\n${issue.description || "No description."}`}
+      isLoading={updating}
+      navigationTitle={current.identifier}
+      markdown={`# ${current.identifier}: ${current.title}\n\n${current.description || "No description."}`}
       metadata={
         <Detail.Metadata>
-          <Detail.Metadata.Label title="Status" text={issue.state.name} />
-          <Detail.Metadata.Label title="Priority" text={issue.priorityLabel} />
-          <Detail.Metadata.Label title="Due" text={issue.dueDate ?? "No due date"} />
-          <Detail.Metadata.Label title="Assignee" text={issue.assignee?.name ?? "Unassigned"} />
-          <Detail.Metadata.Label title="Project" text={issue.project?.name ?? "No project"} />
+          <Detail.Metadata.Label title="Status" text={current.state.name} />
+          <Detail.Metadata.Label title="Priority" text={current.priorityLabel} />
+          <Detail.Metadata.Label title="Due" text={current.dueDate ?? "No due date"} />
+          <Detail.Metadata.Label title="Assignee" text={current.assignee?.name ?? "Unassigned"} />
+          <Detail.Metadata.Label title="Project" text={current.project?.name ?? "No project"} />
         </Detail.Metadata>
       }
       actions={
         <ActionPanel>
-          <Action.OpenInBrowser title="Open Issue in Browser" url={issue.url} />
+          <Action.OpenInBrowser title="Open Issue in Browser" url={current.url} />
           <Action.CopyToClipboard
             title="Copy Issue Link"
-            content={issue.url}
+            content={current.url}
             shortcut={Keyboard.Shortcut.Common.Copy}
           />
+          <ActionPanel.Section title="Edit">
+            <ActionPanel.Submenu title="Change Status…" icon={Icon.CircleFilled} onOpen={loadStates}>
+              {statesError && <Action title={statesError} icon={Icon.ExclamationMark} />}
+              {!states && !statesError && <Action title="Loading Statuses…" icon={Icon.CircleProgress} />}
+              {states?.map((state) => (
+                <Action
+                  key={state.id}
+                  title={state.name}
+                  icon={{
+                    source: state.id === current.state.id ? Icon.CheckCircle : Icon.Circle,
+                    tintColor: state.color,
+                  }}
+                  onAction={() => changeState(state)}
+                />
+              ))}
+            </ActionPanel.Submenu>
+            <Action.PickDate title="Set Due Date…" type={Action.PickDate.Type.Date} onChange={changeDueDate} />
+            {current.dueDate && (
+              <Action title="Clear Due Date" icon={Icon.XMarkCircle} onAction={() => changeDueDate(null)} />
+            )}
+          </ActionPanel.Section>
         </ActionPanel>
       }
     />
@@ -164,6 +258,20 @@ export default function Command({ launchContext }: LaunchProps<{ launchContext: 
   function changeHideDone(value: boolean) {
     setHideDone(value);
     LocalStorage.setItem(hideDoneStorageKey, String(value)).catch(() => undefined);
+  }
+  // Reflects an edit made in the detail view back into the list, so popping
+  // back shows the new status/due date without a full refetch.
+  function updateIssueInPlace(updated: Pick<Issue, "id" | "state" | "dueDate">) {
+    setRequest((prev) => {
+      if (!prev?.result) return prev;
+      return {
+        ...prev,
+        result: {
+          ...prev.result,
+          issues: prev.result.issues.map((issue) => (issue.id === updated.id ? { ...issue, ...updated } : issue)),
+        },
+      };
+    });
   }
   const current = currentView(views, selected, preferences.defaultView);
   const url = current?.url;
@@ -302,7 +410,11 @@ export default function Command({ launchContext }: LaunchProps<{ launchContext: 
           ]}
           actions={
             <ActionPanel>
-              <Action.Push title="Show Issue Details" icon={Icon.Document} target={<IssueDetails issue={issue} />} />
+              <Action.Push
+                title="Show Issue Details"
+                icon={Icon.Document}
+                target={<IssueDetails issue={issue} apiKey={apiKey} onUpdate={updateIssueInPlace} />}
+              />
               <Action
                 title="Refresh View"
                 icon={Icon.ArrowClockwise}

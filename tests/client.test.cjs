@@ -11,7 +11,12 @@ for (const name of ['views', 'linear-client']) {
     compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.CommonJS },
   }).outputText);
 }
-const { fetchView, viewQuery } = require(path.join(compiled, 'linear-client.js'));
+const {
+  fetchView, viewQuery,
+  fetchTeamStates, teamStatesQuery,
+  updateIssueState, updateIssueStateMutation,
+  updateIssueDueDate, updateIssueDueDateMutation,
+} = require(path.join(compiled, 'linear-client.js'));
 const { viewSlug, configuredViews, currentView } = require(path.join(compiled, 'views.js'));
 const url = 'https://linear.app/yongkang/view/todo-41428a79d10e';
 const page = (ids, more = false, cursor = null) => ({ data: { customView: { id: 'view', name: 'ToDo', modelName: 'Issue', issues: { nodes: ids.map(id => ({id, title: id})), pageInfo: { hasNextPage: more, endCursor: cursor } } } } });
@@ -20,8 +25,10 @@ const reply = (body, status = 200) => new Response(JSON.stringify(body), { statu
 test('GraphQL query validates against official Linear schema', () => {
   const schemaPath = 'work/linear-schema.graphql';
   assert.ok(fs.existsSync(schemaPath), 'Download official schema before running tests; see README.');
-  const errors = validate(buildSchema(fs.readFileSync(schemaPath, 'utf8')), parse(viewQuery));
-  assert.deepEqual(errors.map(e => e.message), []);
+  const schema = buildSchema(fs.readFileSync(schemaPath, 'utf8'));
+  for (const doc of [viewQuery, teamStatesQuery, updateIssueStateMutation, updateIssueDueDateMutation]) {
+    assert.deepEqual(validate(schema, parse(doc)).map(e => e.message), []);
+  }
 });
 test('URL registry rejects wrong hosts, non-view routes, temporary filters, and incomplete slots', () => {
   assert.equal(viewSlug(url), 'todo-41428a79d10e');
@@ -67,4 +74,37 @@ test('rejects non-issue views and missing credentials', async t => {
   t.mock.method(global, 'fetch', async () => { const body = page([]); body.data.customView.modelName = 'Project'; return reply(body); });
   await assert.rejects(fetchView(url, 'test-key', new AbortController().signal), /not an issue view/);
   await assert.rejects(fetchView(url, '', new AbortController().signal), /Add your Linear API Key/);
+});
+test('fetches team states sorted by workflow position', async t => {
+  t.mock.method(global, 'fetch', async () => reply({ data: { team: { states: { nodes: [
+    { id: 'done', name: 'Done', color: '#000', type: 'completed', position: 2 },
+    { id: 'todo', name: 'Todo', color: '#000', type: 'unstarted', position: 1 },
+  ] } } } }));
+  const states = await fetchTeamStates('team1', 'test-key', new AbortController().signal);
+  assert.deepEqual(states.map(s => s.id), ['todo', 'done']);
+});
+test('updates issue state and surfaces failures', async t => {
+  const mock = t.mock.method(global, 'fetch', async (endpoint, options) => {
+    const body = JSON.parse(options.body);
+    assert.equal(body.variables.id, 'issue1');
+    assert.equal(body.variables.stateId, 'state1');
+    return reply({ data: { issue: { id: 'issue1', state: { id: 'state1', name: 'Done', color: '#000', type: 'completed' } } } });
+  });
+  const state = await updateIssueState('issue1', 'state1', 'test-key', new AbortController().signal);
+  assert.equal(state.name, 'Done');
+  mock.mock.mockImplementation(async () => reply({ errors: [{ message: 'nope' }] }));
+  await assert.rejects(updateIssueState('issue1', 'state1', 'test-key', new AbortController().signal), /could not update this issue's status/);
+});
+test('updates issue due date, including clearing it', async t => {
+  const mock = t.mock.method(global, 'fetch', async (endpoint, options) => {
+    const body = JSON.parse(options.body);
+    assert.equal(body.variables.dueDate, '2026-09-10');
+    return reply({ data: { issue: { id: 'issue1', dueDate: '2026-09-10' } } });
+  });
+  assert.equal(await updateIssueDueDate('issue1', '2026-09-10', 'test-key', new AbortController().signal), '2026-09-10');
+  mock.mock.mockImplementation(async (endpoint, options) => {
+    assert.equal(JSON.parse(options.body).variables.dueDate, null);
+    return reply({ data: { issue: { id: 'issue1', dueDate: null } } });
+  });
+  assert.equal(await updateIssueDueDate('issue1', null, 'test-key', new AbortController().signal), null);
 });
