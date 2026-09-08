@@ -1,5 +1,7 @@
 export type View = { name: string; url: string; slot: number };
 export const storageKey = "selected-view-url";
+export const sortKeyStorageKey = "issue-sort-key";
+export const hideDoneStorageKey = "hide-done-issues";
 export function viewSlug(value: string): string {
   const url = new URL(value);
   if (url.protocol !== "https:" || url.hostname !== "linear.app" || url.username || url.password)

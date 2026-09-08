@@ -17,9 +17,78 @@ import {
 } from "@raycast/api";
 import { useEffect, useRef, useState } from "react";
 import { fetchView, Issue, ViewResult } from "./linear-client";
-import { configuredViews, currentView, storageKey } from "./views";
+import { configuredViews, currentView, hideDoneStorageKey, sortKeyStorageKey, storageKey } from "./views";
 function SettingsAction() {
   return <Action title="Configure Linear Views" icon={Icon.Gear} onAction={openExtensionPreferences} />;
+}
+type SortKey = "manual" | "dueDate" | "status" | "priority" | "title";
+const SORT_OPTIONS: { key: SortKey; title: string }[] = [
+  { key: "manual", title: "View Order" },
+  { key: "dueDate", title: "Due Date" },
+  { key: "status", title: "Status" },
+  { key: "priority", title: "Priority" },
+  { key: "title", title: "Title" },
+];
+// Workflow stage order, earliest-to-latest, so "Sort by Status" reads like a pipeline.
+const STATUS_RANK: Record<string, number> = {
+  triage: 0,
+  backlog: 1,
+  unstarted: 2,
+  started: 3,
+  completed: 4,
+  canceled: 5,
+};
+const DONE_STATE_TYPES = new Set(["completed", "canceled"]);
+function compareIssues(a: Issue, b: Issue, sortKey: SortKey): number {
+  switch (sortKey) {
+    case "dueDate":
+      if (!a.dueDate && !b.dueDate) return 0;
+      if (!a.dueDate) return 1;
+      if (!b.dueDate) return -1;
+      return a.dueDate.localeCompare(b.dueDate);
+    case "status":
+      return (STATUS_RANK[a.state.type] ?? 99) - (STATUS_RANK[b.state.type] ?? 99);
+    case "priority": {
+      // No priority (0) sorts last, not first.
+      const rank = (issue: Issue) => (issue.priority === 0 ? 99 : issue.priority);
+      return rank(a) - rank(b);
+    }
+    case "title":
+      return a.title.localeCompare(b.title);
+    default:
+      return 0;
+  }
+}
+function SortAndFilterActions({
+  sortKey,
+  setSortKey,
+  hideDone,
+  setHideDone,
+}: {
+  sortKey: SortKey;
+  setSortKey: (value: SortKey) => void;
+  hideDone: boolean;
+  setHideDone: (value: boolean) => void;
+}) {
+  return (
+    <ActionPanel.Section title="Sort & Filter">
+      <ActionPanel.Submenu title="Sort by" icon={Icon.ArrowUp}>
+        {SORT_OPTIONS.map((option) => (
+          <Action
+            key={option.key}
+            title={option.title}
+            icon={sortKey === option.key ? Icon.Checkmark : Icon.Circle}
+            onAction={() => setSortKey(option.key)}
+          />
+        ))}
+      </ActionPanel.Submenu>
+      <Action
+        title={hideDone ? "Show Completed & Canceled" : "Hide Completed & Canceled"}
+        icon={hideDone ? Icon.Eye : Icon.EyeDisabled}
+        onAction={() => setHideDone(!hideDone)}
+      />
+    </ActionPanel.Section>
+  );
 }
 function IssueDetails({ issue }: { issue: Issue }) {
   return (
@@ -57,6 +126,8 @@ export default function Command({ launchContext }: LaunchProps<{ launchContext: 
   const [request, setRequest] = useState<{ url: string; result?: ViewResult; error?: string }>();
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("manual");
+  const [hideDone, setHideDone] = useState(false);
   const selectionVersion = useRef(0);
   const selectionWrites = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
@@ -73,6 +144,27 @@ export default function Command({ launchContext }: LaunchProps<{ launchContext: 
       active = false;
     };
   }, [launchContext?.viewUrl]);
+  useEffect(() => {
+    let active = true;
+    Promise.all([LocalStorage.getItem<string>(sortKeyStorageKey), LocalStorage.getItem<string>(hideDoneStorageKey)])
+      .then(([storedSortKey, storedHideDone]) => {
+        if (!active) return;
+        if (SORT_OPTIONS.some((option) => option.key === storedSortKey)) setSortKey(storedSortKey as SortKey);
+        if (storedHideDone !== undefined) setHideDone(storedHideDone === "true");
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+  function changeSortKey(value: SortKey) {
+    setSortKey(value);
+    LocalStorage.setItem(sortKeyStorageKey, value).catch(() => undefined);
+  }
+  function changeHideDone(value: boolean) {
+    setHideDone(value);
+    LocalStorage.setItem(hideDoneStorageKey, String(value)).catch(() => undefined);
+  }
   const current = currentView(views, selected, preferences.defaultView);
   const url = current?.url;
   const apiKey = preferences.apiKey?.trim();
@@ -140,11 +232,14 @@ export default function Command({ launchContext }: LaunchProps<{ launchContext: 
   const visibleRequest = request?.url === url ? request : undefined;
   const result = visibleRequest?.result;
   const query = search.trim().toLocaleLowerCase();
-  const issues = (result?.issues ?? []).filter((issue) =>
-    [issue.identifier, issue.title, issue.state.name, issue.project?.name, issue.assignee?.name].some((value) =>
-      value?.toLocaleLowerCase().includes(query),
-    ),
-  );
+  const issues = (result?.issues ?? [])
+    .filter((issue) => !hideDone || !DONE_STATE_TYPES.has(issue.state.type))
+    .filter((issue) =>
+      [issue.identifier, issue.title, issue.state.name, issue.project?.name, issue.assignee?.name].some((value) =>
+        value?.toLocaleLowerCase().includes(query),
+      ),
+    )
+    .sort((a, b) => compareIssues(a, b, sortKey));
   const actions = (
     <ActionPanel>
       <Action
@@ -153,12 +248,13 @@ export default function Command({ launchContext }: LaunchProps<{ launchContext: 
         shortcut={Keyboard.Shortcut.Common.Refresh}
         onAction={() => setRefresh((value) => value + 1)}
       />
+      <SortAndFilterActions sortKey={sortKey} setSortKey={changeSortKey} hideDone={hideDone} setHideDone={changeHideDone} />
       <SettingsAction />
     </ActionPanel>
   );
   return (
     <List
-      navigationTitle={result ? `${result.name} · ${result.issues.length} issues` : current?.name}
+      navigationTitle={result ? `${result.name} · ${issues.length} issues` : current?.name}
       isLoading={selectionLoading || loading}
       searchBarPlaceholder="Search all issues in this view…"
       searchText={search}
@@ -213,6 +309,12 @@ export default function Command({ launchContext }: LaunchProps<{ launchContext: 
                 title="Open Issue in Browser"
                 url={issue.url}
                 shortcut={Keyboard.Shortcut.Common.Open}
+              />
+              <SortAndFilterActions
+                sortKey={sortKey}
+                setSortKey={changeSortKey}
+                hideDone={hideDone}
+                setHideDone={changeHideDone}
               />
               <SettingsAction />
             </ActionPanel>

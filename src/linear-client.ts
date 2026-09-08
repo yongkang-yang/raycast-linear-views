@@ -6,6 +6,7 @@ export type Issue = {
   description: string | null;
   url: string;
   dueDate: string | null;
+  priority: number;
   priorityLabel: string;
   state: { name: string; color: string; type: string };
   assignee: { name: string } | null;
@@ -17,7 +18,7 @@ export const viewQuery = `query LinearViewIssues($id: String!, $after: String) {
     id name modelName
     issues(first: 100, after: $after) {
       nodes {
-        id identifier title description url dueDate priorityLabel
+        id identifier title description url dueDate priority priorityLabel
         state { name color type }
         assignee { name }
         project { name }
