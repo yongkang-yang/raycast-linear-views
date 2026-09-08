@@ -106,11 +106,11 @@ function IssueDetails({ issue }: { issue: Issue }) {
       }
       actions={
         <ActionPanel>
-          <Action.CopyToClipboard title="Copy Issue Link" content={issue.url} />
-          <Action.OpenInBrowser
-            title="Open Issue in Browser"
-            url={issue.url}
-            shortcut={Keyboard.Shortcut.Common.Open}
+          <Action.OpenInBrowser title="Open Issue in Browser" url={issue.url} />
+          <Action.CopyToClipboard
+            title="Copy Issue Link"
+            content={issue.url}
+            shortcut={Keyboard.Shortcut.Common.Copy}
           />
         </ActionPanel>
       }
