@@ -14,8 +14,13 @@ for (const name of ['views', 'linear-client']) {
 const {
   fetchView, viewQuery,
   fetchTeamStates, teamStatesQuery,
+  fetchTeamMembers, teamMembersQuery,
+  fetchTeamProjects, teamProjectsQuery,
   updateIssueState, updateIssueStateMutation,
   updateIssueDueDate, updateIssueDueDateMutation,
+  updateIssuePriority, updateIssuePriorityMutation,
+  updateIssueAssignee, updateIssueAssigneeMutation,
+  updateIssueProject, updateIssueProjectMutation,
 } = require(path.join(compiled, 'linear-client.js'));
 const { viewSlug, configuredViews, currentView } = require(path.join(compiled, 'views.js'));
 const url = 'https://linear.app/yongkang/view/todo-41428a79d10e';
@@ -26,7 +31,12 @@ test('GraphQL query validates against official Linear schema', () => {
   const schemaPath = 'work/linear-schema.graphql';
   assert.ok(fs.existsSync(schemaPath), 'Download official schema before running tests; see README.');
   const schema = buildSchema(fs.readFileSync(schemaPath, 'utf8'));
-  for (const doc of [viewQuery, teamStatesQuery, updateIssueStateMutation, updateIssueDueDateMutation]) {
+  const docs = [
+    viewQuery, teamStatesQuery, teamMembersQuery, teamProjectsQuery,
+    updateIssueStateMutation, updateIssueDueDateMutation,
+    updateIssuePriorityMutation, updateIssueAssigneeMutation, updateIssueProjectMutation,
+  ];
+  for (const doc of docs) {
     assert.deepEqual(validate(schema, parse(doc)).map(e => e.message), []);
   }
 });
@@ -112,4 +122,32 @@ test('updates issue due date, including clearing it', async t => {
     return reply({ data: { issueUpdate: { success: true, issue: { id: 'issue1', dueDate: null } } } });
   });
   assert.equal(await updateIssueDueDate('issue1', null, 'test-key', new AbortController().signal), null);
+});
+test('fetches team members and projects sorted by name', async t => {
+  const mock = t.mock.method(global, 'fetch', async () => reply({ data: { team: { members: { nodes: [
+    { id: 'u2', name: 'Zoe' }, { id: 'u1', name: 'Amy' },
+  ] } } } }));
+  assert.deepEqual((await fetchTeamMembers('team1', 'test-key', new AbortController().signal)).map(m => m.name), ['Amy', 'Zoe']);
+  mock.mock.mockImplementation(async () => reply({ data: { team: { projects: { nodes: [
+    { id: 'p2', name: 'Zeta' }, { id: 'p1', name: 'Alpha' },
+  ] } } } }));
+  assert.deepEqual((await fetchTeamProjects('team1', 'test-key', new AbortController().signal)).map(p => p.name), ['Alpha', 'Zeta']);
+});
+test('updates issue priority, assignee, and project', async t => {
+  const mock = t.mock.method(global, 'fetch', async (endpoint, options) => {
+    assert.equal(JSON.parse(options.body).variables.priority, 1);
+    return reply({ data: { issueUpdate: { success: true, issue: { id: 'issue1', priority: 1, priorityLabel: 'Urgent' } } } });
+  });
+  const priority = await updateIssuePriority('issue1', 1, 'test-key', new AbortController().signal);
+  assert.equal(priority.priorityLabel, 'Urgent');
+  mock.mock.mockImplementation(async (endpoint, options) => {
+    assert.equal(JSON.parse(options.body).variables.assigneeId, null);
+    return reply({ data: { issueUpdate: { success: true, issue: { id: 'issue1', assignee: null } } } });
+  });
+  assert.equal(await updateIssueAssignee('issue1', null, 'test-key', new AbortController().signal), null);
+  mock.mock.mockImplementation(async (endpoint, options) => {
+    assert.equal(JSON.parse(options.body).variables.projectId, 'p1');
+    return reply({ data: { issueUpdate: { success: true, issue: { id: 'issue1', project: { id: 'p1', name: 'Alpha' } } } } });
+  });
+  assert.deepEqual(await updateIssueProject('issue1', 'p1', 'test-key', new AbortController().signal), { id: 'p1', name: 'Alpha' });
 });

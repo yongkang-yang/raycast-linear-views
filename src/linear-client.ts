@@ -1,4 +1,5 @@
 import { viewSlug } from "./views";
+export type NamedRef = { id: string; name: string };
 export type Issue = {
   id: string;
   identifier: string;
@@ -9,8 +10,8 @@ export type Issue = {
   priority: number;
   priorityLabel: string;
   state: { id: string; name: string; color: string; type: string };
-  assignee: { name: string } | null;
-  project: { name: string } | null;
+  assignee: NamedRef | null;
+  project: NamedRef | null;
   team: { id: string };
 };
 export type ViewResult = { id: string; name: string; issues: Issue[] };
@@ -22,8 +23,8 @@ export const viewQuery = `query LinearViewIssues($id: String!, $after: String) {
       nodes {
         id identifier title description url dueDate priority priorityLabel
         state { id name color type }
-        assignee { name }
-        project { name }
+        assignee { id name }
+        project { id name }
         team { id }
       }
       pageInfo { hasNextPage endCursor }
@@ -37,6 +38,20 @@ export const teamStatesQuery = `query LinearTeamStates($teamId: String!) {
     }
   }
 }`;
+export const teamMembersQuery = `query LinearTeamMembers($teamId: String!) {
+  team(id: $teamId) {
+    members(first: 100) {
+      nodes { id name }
+    }
+  }
+}`;
+export const teamProjectsQuery = `query LinearTeamProjects($teamId: String!) {
+  team(id: $teamId) {
+    projects(first: 100) {
+      nodes { id name }
+    }
+  }
+}`;
 export const updateIssueStateMutation = `mutation LinearUpdateIssueState($id: String!, $stateId: String!) {
   issueUpdate(id: $id, input: { stateId: $stateId }) {
     success
@@ -47,6 +62,24 @@ export const updateIssueDueDateMutation = `mutation LinearUpdateIssueDueDate($id
   issueUpdate(id: $id, input: { dueDate: $dueDate }) {
     success
     issue { id dueDate }
+  }
+}`;
+export const updateIssuePriorityMutation = `mutation LinearUpdateIssuePriority($id: String!, $priority: Int!) {
+  issueUpdate(id: $id, input: { priority: $priority }) {
+    success
+    issue { id priority priorityLabel }
+  }
+}`;
+export const updateIssueAssigneeMutation = `mutation LinearUpdateIssueAssignee($id: String!, $assigneeId: String) {
+  issueUpdate(id: $id, input: { assigneeId: $assigneeId }) {
+    success
+    issue { id assignee { id name } }
+  }
+}`;
+export const updateIssueProjectMutation = `mutation LinearUpdateIssueProject($id: String!, $projectId: String) {
+  issueUpdate(id: $id, input: { projectId: $projectId }) {
+    success
+    issue { id project { id name } }
   }
 }`;
 type GraphQLResponse<T> = { data?: T; errors?: { message?: string; extensions?: { code?: string } }[] };
@@ -132,22 +165,57 @@ export async function fetchTeamStates(teamId: string, apiKey: string, signal: Ab
   const states = data.team?.states.nodes ?? [];
   return [...states].sort((a, b) => a.position - b.position);
 }
+export async function fetchTeamMembers(teamId: string, apiKey: string, signal: AbortSignal): Promise<NamedRef[]> {
+  const data = await postGraphQL<{ team: { members: { nodes: NamedRef[] } } | null }>(
+    teamMembersQuery,
+    { teamId },
+    apiKey,
+    signal,
+    "Linear could not load this team's members. Try again.",
+  );
+  const members = data.team?.members.nodes ?? [];
+  return [...members].sort((a, b) => a.name.localeCompare(b.name));
+}
+export async function fetchTeamProjects(teamId: string, apiKey: string, signal: AbortSignal): Promise<NamedRef[]> {
+  const data = await postGraphQL<{ team: { projects: { nodes: NamedRef[] } } | null }>(
+    teamProjectsQuery,
+    { teamId },
+    apiKey,
+    signal,
+    "Linear could not load this team's projects. Try again.",
+  );
+  const projects = data.team?.projects.nodes ?? [];
+  return [...projects].sort((a, b) => a.name.localeCompare(b.name));
+}
 type IssueUpdatePayload<T> = { issueUpdate: { success: boolean; issue: T | null } | null };
+// Shared by every issueUpdate-based mutation below: runs it and unwraps the
+// nested { issueUpdate: { success, issue } } payload, treating a falsy
+// `success` the same as a missing `issue` — both mean the edit didn't stick.
+async function runIssueUpdate<T>(
+  mutation: string,
+  variables: Record<string, unknown>,
+  apiKey: string,
+  signal: AbortSignal,
+  onErrorMessage: string,
+): Promise<T> {
+  const data = await postGraphQL<IssueUpdatePayload<T>>(mutation, variables, apiKey, signal, onErrorMessage);
+  const issue = data.issueUpdate?.issue;
+  if (!data.issueUpdate?.success || !issue) throw new Error(onErrorMessage);
+  return issue;
+}
 export async function updateIssueState(
   issueId: string,
   stateId: string,
   apiKey: string,
   signal: AbortSignal,
 ): Promise<Issue["state"]> {
-  const data = await postGraphQL<IssueUpdatePayload<{ id: string; state: Issue["state"] }>>(
+  const issue = await runIssueUpdate<{ state: Issue["state"] }>(
     updateIssueStateMutation,
     { id: issueId, stateId },
     apiKey,
     signal,
     "Linear could not update this issue's status. Try again.",
   );
-  const issue = data.issueUpdate?.issue;
-  if (!data.issueUpdate?.success || !issue) throw new Error("Linear could not update this issue's status. Try again.");
   return issue.state;
 }
 // `dueDate` must be an ISO date string (YYYY-MM-DD) or null to clear it.
@@ -157,15 +225,59 @@ export async function updateIssueDueDate(
   apiKey: string,
   signal: AbortSignal,
 ): Promise<string | null> {
-  const data = await postGraphQL<IssueUpdatePayload<{ id: string; dueDate: string | null }>>(
+  const issue = await runIssueUpdate<{ dueDate: string | null }>(
     updateIssueDueDateMutation,
     { id: issueId, dueDate },
     apiKey,
     signal,
     "Linear could not update this issue's due date. Try again.",
   );
-  const issue = data.issueUpdate?.issue;
-  if (!data.issueUpdate?.success || !issue)
-    throw new Error("Linear could not update this issue's due date. Try again.");
   return issue.dueDate;
+}
+// `priority` is 0-4 (No priority, Urgent, High, Medium, Low) — Linear's fixed set.
+export async function updateIssuePriority(
+  issueId: string,
+  priority: number,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<Pick<Issue, "priority" | "priorityLabel">> {
+  return runIssueUpdate<Pick<Issue, "priority" | "priorityLabel">>(
+    updateIssuePriorityMutation,
+    { id: issueId, priority },
+    apiKey,
+    signal,
+    "Linear could not update this issue's priority. Try again.",
+  );
+}
+// `assigneeId` may be null to unassign.
+export async function updateIssueAssignee(
+  issueId: string,
+  assigneeId: string | null,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<Issue["assignee"]> {
+  const issue = await runIssueUpdate<{ assignee: Issue["assignee"] }>(
+    updateIssueAssigneeMutation,
+    { id: issueId, assigneeId },
+    apiKey,
+    signal,
+    "Linear could not update this issue's assignee. Try again.",
+  );
+  return issue.assignee;
+}
+// `projectId` may be null to remove the issue from its project.
+export async function updateIssueProject(
+  issueId: string,
+  projectId: string | null,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<Issue["project"]> {
+  const issue = await runIssueUpdate<{ project: Issue["project"] }>(
+    updateIssueProjectMutation,
+    { id: issueId, projectId },
+    apiKey,
+    signal,
+    "Linear could not update this issue's project. Try again.",
+  );
+  return issue.project;
 }

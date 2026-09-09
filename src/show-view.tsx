@@ -17,10 +17,16 @@ import {
 } from "@raycast/api";
 import { useEffect, useRef, useState } from "react";
 import {
+  fetchTeamMembers,
+  fetchTeamProjects,
   fetchTeamStates,
   fetchView,
   Issue,
+  NamedRef,
+  updateIssueAssignee,
   updateIssueDueDate,
+  updateIssuePriority,
+  updateIssueProject,
   updateIssueState,
   ViewResult,
   WorkflowState,
@@ -28,6 +34,28 @@ import {
 import { configuredViews, currentView, hideDoneStorageKey, sortKeyStorageKey, storageKey } from "./views";
 function toTimelessDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+const PRIORITY_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: "Urgent" },
+  { value: 2, label: "High" },
+  { value: 3, label: "Medium" },
+  { value: 4, label: "Low" },
+  { value: 0, label: "No Priority" },
+];
+// Fetches a team-scoped picker list once per detail view (on first submenu
+// open) and remembers the result/error so reopening the submenu is instant.
+function useLazyList<T>(load: () => Promise<T[]>) {
+  const [items, setItems] = useState<T[]>();
+  const [error, setError] = useState<string>();
+  async function open() {
+    if (items || error) return;
+    try {
+      setItems(await load());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load options.");
+    }
+  }
+  return { items, error, open };
 }
 function SettingsAction() {
   return <Action title="Configure Linear Views" icon={Icon.Gear} onAction={openExtensionPreferences} />;
@@ -101,6 +129,7 @@ function SortAndFilterActions({
     </ActionPanel.Section>
   );
 }
+type EditableFields = Pick<Issue, "id" | "state" | "dueDate" | "priority" | "priorityLabel" | "assignee" | "project">;
 function IssueDetails({
   issue,
   apiKey,
@@ -108,61 +137,79 @@ function IssueDetails({
 }: {
   issue: Issue;
   apiKey: string;
-  onUpdate: (updated: Pick<Issue, "id" | "state" | "dueDate">) => void;
+  onUpdate: (updated: EditableFields) => void;
 }) {
   const [current, setCurrent] = useState(issue);
-  const [states, setStates] = useState<WorkflowState[]>();
-  const [statesError, setStatesError] = useState<string>();
   const [updating, setUpdating] = useState(false);
-  async function loadStates() {
-    if (states || statesError) return; // Fetched once per detail view; the list opens a fresh one anyway.
-    try {
-      setStates(await fetchTeamStates(current.team.id, apiKey, new AbortController().signal));
-    } catch (error) {
-      setStatesError(error instanceof Error ? error.message : "Could not load statuses.");
-    }
-  }
-  async function changeState(state: WorkflowState) {
-    if (state.id === current.state.id) return;
+  const states = useLazyList<WorkflowState>(() =>
+    fetchTeamStates(current.team.id, apiKey, new AbortController().signal),
+  );
+  const members = useLazyList<NamedRef>(() => fetchTeamMembers(current.team.id, apiKey, new AbortController().signal));
+  const projects = useLazyList<NamedRef>(() =>
+    fetchTeamProjects(current.team.id, apiKey, new AbortController().signal),
+  );
+  async function applyUpdate<T>(
+    action: () => Promise<T>,
+    apply: (result: T) => Partial<Issue>,
+    successTitle: (result: T) => string,
+    failureTitle: string,
+  ) {
     setUpdating(true);
     try {
-      const updatedState = await updateIssueState(current.id, state.id, apiKey, new AbortController().signal);
-      const updated = { ...current, state: updatedState };
+      const result = await action();
+      const updated = { ...current, ...apply(result) };
       setCurrent(updated);
       onUpdate(updated);
-      await showToast({ style: Toast.Style.Success, title: `Status Set to ${updatedState.name}` });
+      await showToast({ style: Toast.Style.Success, title: successTitle(result) });
     } catch (error) {
       await showToast({
         style: Toast.Style.Failure,
-        title: "Could Not Update Status",
+        title: failureTitle,
         message: error instanceof Error ? error.message : String(error),
       });
     } finally {
       setUpdating(false);
     }
   }
-  async function changeDueDate(date: Date | null) {
-    setUpdating(true);
-    try {
-      const dueDate = date ? toTimelessDate(date) : null;
-      const updatedDueDate = await updateIssueDueDate(current.id, dueDate, apiKey, new AbortController().signal);
-      const updated = { ...current, dueDate: updatedDueDate };
-      setCurrent(updated);
-      onUpdate(updated);
-      await showToast({
-        style: Toast.Style.Success,
-        title: updatedDueDate ? `Due Date Set to ${updatedDueDate}` : "Due Date Cleared",
-      });
-    } catch (error) {
-      await showToast({
-        style: Toast.Style.Failure,
-        title: "Could Not Update Due Date",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setUpdating(false);
-    }
-  }
+  const changeState = (state: WorkflowState) =>
+    state.id !== current.state.id &&
+    applyUpdate(
+      () => updateIssueState(current.id, state.id, apiKey, new AbortController().signal),
+      (state) => ({ state }),
+      (state) => `Status Set to ${state.name}`,
+      "Could Not Update Status",
+    );
+  const changeDueDate = (date: Date | null) =>
+    applyUpdate(
+      () => updateIssueDueDate(current.id, date ? toTimelessDate(date) : null, apiKey, new AbortController().signal),
+      (dueDate) => ({ dueDate }),
+      (dueDate) => (dueDate ? `Due Date Set to ${dueDate}` : "Due Date Cleared"),
+      "Could Not Update Due Date",
+    );
+  const changePriority = (priority: number) =>
+    priority !== current.priority &&
+    applyUpdate(
+      () => updateIssuePriority(current.id, priority, apiKey, new AbortController().signal),
+      (result) => result,
+      (result) => `Priority Set to ${result.priorityLabel}`,
+      "Could Not Update Priority",
+    );
+  const changeAssignee = (assignee: NamedRef | null) =>
+    assignee?.id !== current.assignee?.id &&
+    applyUpdate(
+      () => updateIssueAssignee(current.id, assignee?.id ?? null, apiKey, new AbortController().signal),
+      (assignee) => ({ assignee }),
+      (assignee) => (assignee ? `Assigned to ${assignee.name}` : "Unassigned"),
+      "Could Not Update Assignee",
+    );
+  const changeProject = (project: NamedRef | null) =>
+    project?.id !== current.project?.id &&
+    applyUpdate(
+      () => updateIssueProject(current.id, project?.id ?? null, apiKey, new AbortController().signal),
+      (project) => ({ project }),
+      (project) => (project ? `Project Set to ${project.name}` : "Removed from Project"),
+      "Could Not Update Project",
+    );
   return (
     <Detail
       isLoading={updating}
@@ -186,10 +233,10 @@ function IssueDetails({
             shortcut={Keyboard.Shortcut.Common.Copy}
           />
           <ActionPanel.Section title="Edit">
-            <ActionPanel.Submenu title="Change Status…" icon={Icon.CircleFilled} onOpen={loadStates}>
-              {statesError && <Action title={statesError} icon={Icon.ExclamationMark} />}
-              {!states && !statesError && <Action title="Loading Statuses…" icon={Icon.CircleProgress} />}
-              {states?.map((state) => (
+            <ActionPanel.Submenu title="Change Status…" icon={Icon.CircleFilled} onOpen={states.open}>
+              {states.error && <Action title={states.error} icon={Icon.ExclamationMark} />}
+              {!states.items && !states.error && <Action title="Loading Statuses…" icon={Icon.CircleProgress} />}
+              {states.items?.map((state) => (
                 <Action
                   key={state.id}
                   title={state.name}
@@ -198,6 +245,50 @@ function IssueDetails({
                     tintColor: state.color,
                   }}
                   onAction={() => changeState(state)}
+                />
+              ))}
+            </ActionPanel.Submenu>
+            <ActionPanel.Submenu title="Change Priority…" icon={Icon.Exclamationmark3}>
+              {PRIORITY_OPTIONS.map((option) => (
+                <Action
+                  key={option.value}
+                  title={option.label}
+                  icon={option.value === current.priority ? Icon.CheckCircle : Icon.Circle}
+                  onAction={() => changePriority(option.value)}
+                />
+              ))}
+            </ActionPanel.Submenu>
+            <ActionPanel.Submenu title="Change Assignee…" icon={Icon.Person} onOpen={members.open}>
+              {members.error && <Action title={members.error} icon={Icon.ExclamationMark} />}
+              {!members.items && !members.error && <Action title="Loading Members…" icon={Icon.CircleProgress} />}
+              <Action
+                title="Unassigned"
+                icon={!current.assignee ? Icon.CheckCircle : Icon.Circle}
+                onAction={() => changeAssignee(null)}
+              />
+              {members.items?.map((member) => (
+                <Action
+                  key={member.id}
+                  title={member.name}
+                  icon={member.id === current.assignee?.id ? Icon.CheckCircle : Icon.Circle}
+                  onAction={() => changeAssignee(member)}
+                />
+              ))}
+            </ActionPanel.Submenu>
+            <ActionPanel.Submenu title="Change Project…" icon={Icon.Layers} onOpen={projects.open}>
+              {projects.error && <Action title={projects.error} icon={Icon.ExclamationMark} />}
+              {!projects.items && !projects.error && <Action title="Loading Projects…" icon={Icon.CircleProgress} />}
+              <Action
+                title="No Project"
+                icon={!current.project ? Icon.CheckCircle : Icon.Circle}
+                onAction={() => changeProject(null)}
+              />
+              {projects.items?.map((project) => (
+                <Action
+                  key={project.id}
+                  title={project.name}
+                  icon={project.id === current.project?.id ? Icon.CheckCircle : Icon.Circle}
+                  onAction={() => changeProject(project)}
                 />
               ))}
             </ActionPanel.Submenu>
@@ -260,8 +351,9 @@ export default function Command({ launchContext }: LaunchProps<{ launchContext: 
     LocalStorage.setItem(hideDoneStorageKey, String(value)).catch(() => undefined);
   }
   // Reflects an edit made in the detail view back into the list, so popping
-  // back shows the new status/due date without a full refetch.
-  function updateIssueInPlace(updated: Pick<Issue, "id" | "state" | "dueDate">) {
+  // back shows the new status/due date/priority/assignee/project without a
+  // full refetch.
+  function updateIssueInPlace(updated: EditableFields) {
     setRequest((prev) => {
       if (!prev?.result) return prev;
       return {
