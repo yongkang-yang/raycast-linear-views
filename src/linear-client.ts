@@ -132,21 +132,23 @@ export async function fetchTeamStates(teamId: string, apiKey: string, signal: Ab
   const states = data.team?.states.nodes ?? [];
   return [...states].sort((a, b) => a.position - b.position);
 }
+type IssueUpdatePayload<T> = { issueUpdate: { success: boolean; issue: T | null } | null };
 export async function updateIssueState(
   issueId: string,
   stateId: string,
   apiKey: string,
   signal: AbortSignal,
 ): Promise<Issue["state"]> {
-  const data = await postGraphQL<{ issue: { id: string; state: Issue["state"] } | null }>(
+  const data = await postGraphQL<IssueUpdatePayload<{ id: string; state: Issue["state"] }>>(
     updateIssueStateMutation,
     { id: issueId, stateId },
     apiKey,
     signal,
     "Linear could not update this issue's status. Try again.",
   );
-  if (!data.issue) throw new Error("Linear could not update this issue's status. Try again.");
-  return data.issue.state;
+  const issue = data.issueUpdate?.issue;
+  if (!data.issueUpdate?.success || !issue) throw new Error("Linear could not update this issue's status. Try again.");
+  return issue.state;
 }
 // `dueDate` must be an ISO date string (YYYY-MM-DD) or null to clear it.
 export async function updateIssueDueDate(
@@ -155,13 +157,15 @@ export async function updateIssueDueDate(
   apiKey: string,
   signal: AbortSignal,
 ): Promise<string | null> {
-  const data = await postGraphQL<{ issue: { id: string; dueDate: string | null } | null }>(
+  const data = await postGraphQL<IssueUpdatePayload<{ id: string; dueDate: string | null }>>(
     updateIssueDueDateMutation,
     { id: issueId, dueDate },
     apiKey,
     signal,
     "Linear could not update this issue's due date. Try again.",
   );
-  if (!data.issue) throw new Error("Linear could not update this issue's due date. Try again.");
-  return data.issue.dueDate;
+  const issue = data.issueUpdate?.issue;
+  if (!data.issueUpdate?.success || !issue)
+    throw new Error("Linear could not update this issue's due date. Try again.");
+  return issue.dueDate;
 }

@@ -84,14 +84,19 @@ test('fetches team states sorted by workflow position', async t => {
   assert.deepEqual(states.map(s => s.id), ['todo', 'done']);
 });
 test('updates issue state and surfaces failures', async t => {
+  // issueUpdate nests its result under an "issueUpdate" payload object, not
+  // a bare "issue" field — this shape mismatch is what let a real bug (every
+  // update reporting failure while actually succeeding) slip past tests.
   const mock = t.mock.method(global, 'fetch', async (endpoint, options) => {
     const body = JSON.parse(options.body);
     assert.equal(body.variables.id, 'issue1');
     assert.equal(body.variables.stateId, 'state1');
-    return reply({ data: { issue: { id: 'issue1', state: { id: 'state1', name: 'Done', color: '#000', type: 'completed' } } } });
+    return reply({ data: { issueUpdate: { success: true, issue: { id: 'issue1', state: { id: 'state1', name: 'Done', color: '#000', type: 'completed' } } } } });
   });
   const state = await updateIssueState('issue1', 'state1', 'test-key', new AbortController().signal);
   assert.equal(state.name, 'Done');
+  mock.mock.mockImplementation(async () => reply({ data: { issueUpdate: { success: false, issue: null } } }));
+  await assert.rejects(updateIssueState('issue1', 'state1', 'test-key', new AbortController().signal), /could not update this issue's status/);
   mock.mock.mockImplementation(async () => reply({ errors: [{ message: 'nope' }] }));
   await assert.rejects(updateIssueState('issue1', 'state1', 'test-key', new AbortController().signal), /could not update this issue's status/);
 });
@@ -99,12 +104,12 @@ test('updates issue due date, including clearing it', async t => {
   const mock = t.mock.method(global, 'fetch', async (endpoint, options) => {
     const body = JSON.parse(options.body);
     assert.equal(body.variables.dueDate, '2026-09-10');
-    return reply({ data: { issue: { id: 'issue1', dueDate: '2026-09-10' } } });
+    return reply({ data: { issueUpdate: { success: true, issue: { id: 'issue1', dueDate: '2026-09-10' } } } });
   });
   assert.equal(await updateIssueDueDate('issue1', '2026-09-10', 'test-key', new AbortController().signal), '2026-09-10');
   mock.mock.mockImplementation(async (endpoint, options) => {
     assert.equal(JSON.parse(options.body).variables.dueDate, null);
-    return reply({ data: { issue: { id: 'issue1', dueDate: null } } });
+    return reply({ data: { issueUpdate: { success: true, issue: { id: 'issue1', dueDate: null } } } });
   });
   assert.equal(await updateIssueDueDate('issue1', null, 'test-key', new AbortController().signal), null);
 });
